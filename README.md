@@ -1,6 +1,6 @@
 # Pharos Auto Bot
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/Kazuha787/Pharos-Auto-Bot)
+[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](https://github.com/airdropbomb/Pharos2)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Pharos Auto Bot** is a robust, modular automation framework built in **Node.js** for interacting with the [Pharos Testnet](https://pharos.network). It handles day-to-day tasks like check-ins, faucet claims, social verifications, and on-chain operations with ease and precision.
@@ -69,8 +69,7 @@ Before using the bot, make sure you have:
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/Kazuha787/Pharos-Auto-Bot.git
-cd Pharos-Auto-Bot
+git clone https://github.com/airdropbomb/Pharos2.git && cd Pharos2
 ```
 # 2. Install dependencies
 ```
@@ -98,12 +97,12 @@ node main.js
 Need help, updates, or want to show off your setup?
 
 Join the official Telegram group for support, discussion, and announcements:  
-**[→ Telegram: @Offical_Im_kazuha](https://t.me/Offical_Im_kazuha)**
+**[→ Telegram: @Offical_ADB NODE](https://t.me/ADB NODE)**
 
 Whether you're facing issues, contributing improvements, or just vibing — everyone's welcome.
 
 Have a feature request or found a bug?  
-→ Open an [Issue](https://github.com/Kazuha787/Pharos-Auto-Bot/issues) or submit a [Pull Request](https://github.com/Kazuha787/Pharos-Auto-Bot/pulls).
+→ Open an [Issue](https://github.com/airdropbomb/Pharos2) or submit a [Pull Request](https://github.com/airdropbomb/Pharos2).
 
 ---
 

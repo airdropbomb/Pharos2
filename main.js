@@ -31,7 +31,7 @@ const asciiBannerLines = [
   "██║         ██║  ██║    ██║  ██║    ██║  ██║    ╚██████╔╝    ███████║",
   "╚═╝         ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚═╝  ╚═╝     ╚═════╝     ╚══════╝",
   "",
-  "       Pharos Testnet Bot v2.0 - Creatd By Kazuha787       ",
+  "       Pharos Testnet Bot v2.0 - Creatd By ADB NODE      ",
   "                  LETS FUCK THIS TESTNET                   ",
 ];
 

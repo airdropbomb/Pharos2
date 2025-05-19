@@ -13,7 +13,7 @@ const contract = chains.utils.contract;
 
 // Constants for Unlimited Faucet
 const BASE_API = "https://api.pharosnetwork.xyz";
-const REF_CODE = "PNFXEcz1CWezuu3g";
+const REF_CODE = "M4pMcM7LcyfWdHk4";
 const RPC_URL = "https://testnet.dplabs-internal.com";
 
 // Utility to generate random amount in range (inclusive, in PHRS)
@@ -53,7 +53,7 @@ async function performSwapUSDC(logger) {
     try {
       let r = new e.Wallet(t, pharos.provider());
       let o = r.address;
-      let i = getRandomAmount(0.2, 0.9); // Random amount between 0.2 and 0.9 PHRS
+      let i = getRandomAmount(0.1, 0.9); // Random amount between 0.2 and 0.9 PHRS
       let amountStr = e.formatEther(i);
       let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDC.slice(2).padStart(64, "0");
       let n = i.toString(16).padStart(64, "0");

@@ -78,7 +78,7 @@ npm install
 ```
 # 3. Configure your settings
 ```
-nano wallet.jsom 
+nano wallet.json 
 ```
 # or use any code editor
 

@@ -53,7 +53,7 @@ async function performSwapUSDC(logger) {
     try {
       let r = new e.Wallet(t, pharos.provider());
       let o = r.address;
-      let i = getRandomAmount(0.1, 0.9); // Random amount between 0.2 and 0.9 PHRS
+      let i = getRandomAmount(0.01, 0.1); // Random amount between 0.01 and 0.1 PHRS
       let amountStr = e.formatEther(i);
       let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDC.slice(2).padStart(64, "0");
       let n = i.toString(16).padStart(64, "0");
@@ -98,7 +98,7 @@ async function performSwapUSDT(logger) {
     try {
       let r = new e.Wallet(t, pharos.provider());
       let o = r.address;
-      let i = getRandomAmount(0.2, 0.9); // Random amount between 0.2 and 0.9 PHRS
+      let i = getRandomAmount(0.01, 0.1); // Random amount between 0.01 and 0.1 PHRS
       let amountStr = e.formatEther(i);
       let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDT.slice(2).padStart(64, "0");
       let n = i.toString(16).padStart(64, "0");
@@ -167,7 +167,7 @@ async function addLpUSDC(logger) {
       if (!l) {
         continue;
       }
-      let amount = getRandomAmount(0.2, 0.5); // Random amount between 0.2 and 0.5
+      let amount = getRandomAmount(0.01, 0.1); // Random amount between 0.2 and 0.5
       let amountStr = e.formatEther(amount);
       let c = {
         token0: contract.WPHRS,
@@ -218,7 +218,7 @@ async function addLpUSDT(logger) {
       if (!l) {
         continue;
       }
-      let amount = getRandomAmount(0.2, 0.5); // Random amount between 0.2 and 0.5
+      let amount = getRandomAmount(0.01, 0.1); // Random amount between 0.01 and 0.1
       let amountStr = e.formatEther(amount);
       let c = {
         token0: contract.WPHRS,

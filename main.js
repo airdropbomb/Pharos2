@@ -103,7 +103,7 @@ function formatLogMessage(msg) {
   );
 }
 
-// Spinner animation (used for other tasks, not Unlimited Faucet)
+// Spinner animation
 const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 function createSpinner(text) {
   let frameIndex = 0;
@@ -150,11 +150,12 @@ function displayBanner() {
 
 // Display menu
 function displayMenu() {
-  console.log(chalk.greenBright.bold("=== Menu ==="));
+  console.log(chalk.blueBright.bold("\n>═══ Pharos Testnet Bot Menu ═══<"));
   menuOptions.forEach((opt, idx) => {
-    console.log(chalk.green(`${idx + 1}. ${opt.label}`));
+    const optionNumber = `${idx + 1}`.padStart(2, '0'); // Two-digit numbering
+    console.log(chalk.blue(`  ${optionNumber} > ${opt.label.padEnd(35)} <`));
   });
-  console.log();
+  console.log(chalk.blueBright.bold(">═══════════════════════════════<\n"));
 }
 
 // ---- MAIN ----
@@ -181,7 +182,7 @@ async function main() {
   while (true) {
     displayBanner();
     displayMenu();
-    const choice = await requestInput("Select an option (1-14)", "number");
+    const choice = await requestInput("Select an option (1-13)", "number");
     const idx = choice - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= menuOptions.length) {
@@ -211,12 +212,7 @@ async function main() {
     }
 
     try {
-      // Skip spinner for Unlimited Faucet to avoid clutter
-      const useSpinner = selected.value !== "unlimitedFaucet";
-      let spinner;
-      if (useSpinner) {
-        spinner = createSpinner(`Running ${selected.label}...`);
-      }
+      const spinner = createSpinner(`Running ${selected.label}...`);
       logger(`System | Starting ${selected.label}...`);
       const scriptFunc = service[selected.value];
       if (scriptFunc) {
@@ -225,14 +221,10 @@ async function main() {
       } else {
         logger(`System | Error: ${selected.label} not implemented.`);
       }
-      if (useSpinner) {
-        spinner.stop();
-      }
+      spinner.stop();
     } catch (e) {
       logger(`System | Error in ${selected.label}: ${chalk.red(e.message)}`);
-      if (useSpinner) {
-        spinner.stop();
-      }
+      spinner.stop();
     }
 
     await requestInput("Press Enter to continue...");

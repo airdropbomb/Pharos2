@@ -6,6 +6,7 @@ const chalk = require("chalk").default || require("chalk");
 const axios = require("axios");
 const FakeUserAgent = require("fake-useragent");
 const chains = require("./chains");
+const LiquidityService = require("./services/liquidity"); // Import LiquidityService
 const pharos = chains.testnet.pharos;
 const etc = chains.utils.etc;
 const abi = chains.utils.abi;
@@ -43,6 +44,65 @@ async function askQuestion(question, logger) {
   });
 }
 
+// Modified addLpUSDC to use LiquidityService
+async function addLpUSDC(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
+      continue;
+    }
+    try {
+      const wallet = new e.Wallet(t, pharos.provider());
+      const liquidityService = new LiquidityService(wallet, logger, $); // Initialize LiquidityService
+      const amount = parseFloat(e.formatEther(getRandomAmount(0.01, 0.1))).toFixed(4); // Random amount between 0.01 and 0.1
+
+      for (let w = 1; w <= global.maxTransaction; w++) {
+        logger(`System | ${$} | Initiating Add Liquidity ${amount} PHRS + ${amount} USDC (${w}/${global.maxTransaction})`);
+        const txHash = await liquidityService.addLiquidity('PHRS', 'USDC', amount, amount);
+        if (txHash) {
+          logger(`System | ${$} | ${etc.timelog()} | Liquidity Added: ${chalk.green(pharos.explorer.tx(txHash))}`);
+        } else {
+          logger(`System | ${$} | Warning: Add Liquidity PHRS-USDC (${w}/${global.maxTransaction}) skipped due to error`);
+        }
+        await etc.delay(5e3); // 5-second delay between attempts
+      }
+    } catch (m) {
+      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(m.message)}`);
+    }
+  }
+}
+
+// Modified addLpUSDT to use LiquidityService
+async function addLpUSDT(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
+      continue;
+    }
+    try {
+      const wallet = new e.Wallet(t, pharos.provider());
+      const liquidityService = new LiquidityService(wallet, logger, $); // Initialize LiquidityService
+      const amount = parseFloat(e.formatEther(getRandomAmount(0.01, 0.1))).toFixed(4); // Random amount between 0.01 and 0.1
+
+      for (let w = 1; w <= global.maxTransaction; w++) {
+        logger(`System | ${$} | Initiating Add Liquidity ${amount} PHRS + ${amount} USDT (${w}/${global.maxTransaction})`);
+        const txHash = await liquidityService.addLiquidity('PHRS', 'USDT', amount, amount);
+        if (txHash) {
+          logger(`System | ${$} | ${etc.timelog()} | Liquidity Added: ${chalk.green(pharos.explorer.tx(txHash))}`);
+        } else {
+          logger(`System | ${$} | Warning: Add Liquidity PHRS-USDT (${w}/${global.maxTransaction}) skipped due to error`);
+        }
+        await etc.delay(5e3); // 5-second delay between attempts
+      }
+    } catch (m) {
+      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(m.message)}`);
+    }
+  }
+}
+
+// Keep other functions unchanged
 async function performSwapUSDC(logger) {
   for (let a of global.selectedWallets || []) {
     let { privatekey: t, name: $ } = a;
@@ -150,108 +210,6 @@ async function checkBalanceAndApprove(a, t, $, logger) {
     }
   }
   return true;
-}
-
-async function addLpUSDC(logger) {
-  for (let a of global.selectedWallets || []) {
-    let { privatekey: t, name: $ } = a;
-    if (!t) {
-      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
-      continue;
-    }
-    try {
-      let r = new e.Wallet(t, pharos.provider());
-      let o = new e.Contract(contract.ROUTER, abi.ROUTER, r);
-      let i = Math.floor(Date.now() / 1e3) + 1800;
-      let l = await checkBalanceAndApprove(r, contract.USDC, contract.ROUTER, logger);
-      if (!l) {
-        continue;
-      }
-      let amount = getRandomAmount(0.01, 0.1); // Random amount between 0.2 and 0.5
-      let amountStr = e.formatEther(amount);
-      let c = {
-        token0: contract.WPHRS,
-        token1: contract.USDC,
-        fee: 500,
-        tickLower: -887220,
-        tickUpper: 887220,
-        amount0Desired: amount.toString(),
-        amount1Desired: amount.toString(),
-        amount0Min: "0",
-        amount1Min: "0",
-        recipient: r.address,
-        deadline: i,
-      };
-      let d = o.interface.encodeFunctionData("mint", [c]);
-      let p = o.interface.encodeFunctionData("refundETH", []);
-      let f = [d, p];
-      for (let w = 1; w <= global.maxTransaction; w++) {
-        logger(
-          `System | ${$} | Initiating Add Liquidity ${amountStr} PHRS + ${amountStr} USDC (${w}/${global.maxTransaction})`
-        );
-        let g = await o.multicall(f, {
-          value: amount,
-          gasLimit: 5e5,
-        });
-        await g.wait(1);
-        logger(`System | ${$} | ${etc.timelog()} | Liquidity Added: ${chalk.green(pharos.explorer.tx(g.hash))}`);
-        await etc.delay(5e3);
-      }
-    } catch (m) {
-      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(m.message)}`);
-    }
-  }
-}
-
-async function addLpUSDT(logger) {
-  for (let a of global.selectedWallets || []) {
-    let { privatekey: t, name: $ } = a;
-    if (!t) {
-      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
-      continue;
-    }
-    try {
-      let r = new e.Wallet(t, pharos.provider());
-      let o = new e.Contract(contract.ROUTER, abi.ROUTER, r);
-      let i = Math.floor(Date.now() / 1e3) + 1800;
-      let l = await checkBalanceAndApprove(r, contract.USDT, contract.ROUTER, logger);
-      if (!l) {
-        continue;
-      }
-      let amount = getRandomAmount(0.01, 0.1); // Random amount between 0.01 and 0.1
-      let amountStr = e.formatEther(amount);
-      let c = {
-        token0: contract.WPHRS,
-        token1: contract.USDT,
-        fee: 500,
-        tickLower: -887220,
-        tickUpper: 887220,
-        amount0Desired: amount.toString(),
-        amount1Desired: amount.toString(),
-        amount0Min: "0",
-        amount1Min: "0",
-        recipient: r.address,
-        deadline: i,
-      };
-      let d = o.interface.encodeFunctionData("mint", [c]);
-      let p = o.interface.encodeFunctionData("refundETH", []);
-      let f = [d, p];
-      for (let w = 1; w <= global.maxTransaction; w++) {
-        logger(
-          `System | ${$} | Initiating Add Liquidity ${amountStr} PHRS + ${amountStr} USDT (${w}/${global.maxTransaction})`
-        );
-        let g = await o.multicall(f, {
-          value: amount,
-          gasLimit: 5e5,
-        });
-        await g.wait(1);
-        logger(`System | ${$} | ${etc.timelog()} | Liquidity Added: ${chalk.green(pharos.explorer.tx(g.hash))}`);
-        await etc.delay(5e3);
-      }
-    } catch (m) {
-      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(m.message)}`);
-    }
-  }
 }
 
 async function randomTransfer(logger) {

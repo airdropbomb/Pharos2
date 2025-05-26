@@ -44,6 +44,10 @@ async function askQuestion(question, logger) {
 }
 
 async function performSwapUSDC(logger) {
+  const maxRetries = 3; // Number of retry attempts for provider operations
+  const retryDelay = 5000; // Delay between retries (5 seconds)
+  const transactionDelay = 3000; // Reduced delay between transactions (3 seconds)
+
   for (let a of global.selectedWallets || []) {
     let { privatekey: t, name: $ } = a;
     if (!t) {
@@ -51,10 +55,30 @@ async function performSwapUSDC(logger) {
       continue;
     }
     try {
-      let r = new e.Wallet(t, pharos.provider());
+      // Initialize wallet and provider
+      let provider = new e.JsonRpcProvider(RPC_URL, { chainId: 688688, name: "pharos-testnet" });
+      let r = new e.Wallet(t, provider);
       let o = r.address;
-      let i = getRandomAmount(0.2, 0.9); // Random amount between 0.2 and 0.9 PHRS
+
+      // Check wallet balance
+      let balance = await provider.getBalance(o);
+      let balanceEth = e.formatEther(balance);
+      logger(`System | ${$} | Wallet balance: ${balanceEth} PHRS`);
+
+      let i = getRandomAmount(0.0001, 0.0003); // Random amount between 0.0001 and 0.0003 PHRS
       let amountStr = e.formatEther(i);
+
+      // Estimate gas cost for a single transaction
+      let gasPrice = await provider.getFeeData();
+      let estimatedGasLimit = BigInt(200000); // Conservative estimate for swap
+      let gasCost = gasPrice.gasPrice * estimatedGasLimit;
+      let totalCost = i + gasCost * BigInt(global.maxTransaction);
+
+      if (balance < totalCost) {
+        logger(`System | Warning: ${$} | Insufficient balance (${balanceEth} PHRS) for ${global.maxTransaction} swaps of ${amountStr} PHRS plus gas`);
+        continue;
+      }
+
       let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDC.slice(2).padStart(64, "0");
       let n = i.toString(16).padStart(64, "0");
       let l =
@@ -68,19 +92,61 @@ async function performSwapUSDC(logger) {
       let d = ["function multicall(uint256 deadline, bytes[] calldata data) payable"];
       let p = new e.Contract(contract.SWAP, d, r);
       let f = p.interface.encodeFunctionData("multicall", [c, [l]]);
-      await pharos.provider().getFeeData();
+
       for (let w = 1; w <= global.maxTransaction; w++) {
         logger(`System | ${$} | Initiating Swap ${amountStr} PHRS to USDC (${w}/${global.maxTransaction})`);
-        let g = {
-          to: p.target,
-          data: f,
-          value: i,
-        };
-        g.gasLimit = (await pharos.provider().estimateGas(g)) * 12n / 10n;
-        let m = await r.sendTransaction(g);
-        await m.wait(1);
-        logger(`System | ${$} | ${etc.timelog()} | Swap Confirmed: ${chalk.green(pharos.explorer.tx(m.hash))}`);
-        await etc.delay(5e3);
+
+        let success = false;
+        let attempt = 0;
+
+        while (!success && attempt < maxRetries) {
+          try {
+            attempt++;
+            let g = {
+              to: p.target,
+              data: f,
+              value: i,
+            };
+
+            // Estimate gas with retry
+            let gasLimit;
+            try {
+              gasLimit = (await provider.estimateGas(g)) * 12n / 10n; // 20% buffer
+            } catch (gasError) {
+              if (attempt < maxRetries) {
+                logger(`System | ${$} | Gas estimation failed (attempt ${attempt}/${maxRetries}): ${chalk.yellow(gasError.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+                await etc.delay(retryDelay);
+                continue;
+              } else {
+                throw new Error(`Gas estimation failed after ${maxRetries} attempts: ${gasError.message}`);
+              }
+            }
+
+            g.gasLimit = gasLimit;
+
+            // Send transaction
+            let m = await r.sendTransaction(g);
+            let receipt = await m.wait(1);
+            logger(`System | ${$} | ${etc.timelog()} | Swap Confirmed: ${chalk.green(pharos.explorer.tx(m.hash))}`);
+            success = true;
+          } catch (u) {
+            if (attempt < maxRetries) {
+              logger(`System | ${$} | Swap attempt ${attempt}/${maxRetries} failed: ${chalk.yellow(u.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+              await etc.delay(retryDelay);
+              continue;
+            } else {
+              logger(`System | ${$} | ${etc.timelog()} | Swap failed after ${maxRetries} attempts: ${chalk.red(u.message)}`);
+              break;
+            }
+          }
+        }
+
+        if (!success) {
+          logger(`System | ${$} | Skipping remaining swaps due to repeated failures`);
+          break;
+        }
+
+        await etc.delay(transactionDelay); // Reduced delay for faster transactions
       }
     } catch (u) {
       logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(u.message)}`);
@@ -89,6 +155,10 @@ async function performSwapUSDC(logger) {
 }
 
 async function performSwapUSDT(logger) {
+  const maxRetries = 3; // Number of retry attempts for provider operations
+  const retryDelay = 5000; // Delay between retries (5 seconds)
+  const transactionDelay = 3000; // Reduced delay between transactions (3 seconds)
+
   for (let a of global.selectedWallets || []) {
     let { privatekey: t, name: $ } = a;
     if (!t) {
@@ -96,10 +166,30 @@ async function performSwapUSDT(logger) {
       continue;
     }
     try {
-      let r = new e.Wallet(t, pharos.provider());
+      // Initialize wallet and provider
+      let provider = new e.JsonRpcProvider(RPC_URL, { chainId: 688688, name: "pharos-testnet" });
+      let r = new e.Wallet(t, provider);
       let o = r.address;
-      let i = getRandomAmount(0.2, 0.9); // Random amount between 0.2 and 0.9 PHRS
+
+      // Check wallet balance
+      let balance = await provider.getBalance(o);
+      let balanceEth = e.formatEther(balance);
+      logger(`System | ${$} | Wallet balance: ${balanceEth} PHRS`);
+
+      let i = getRandomAmount(0.0001, 0.0003); // Random amount between 0.0001 and 0.0003 PHRS
       let amountStr = e.formatEther(i);
+
+      // Estimate gas cost for a single transaction
+      let gasPrice = await provider.getFeeData();
+      let estimatedGasLimit = BigInt(200000); // Conservative estimate for swap
+      let gasCost = gasPrice.gasPrice * estimatedGasLimit;
+      let totalCost = i + gasCost * BigInt(global.maxTransaction);
+
+      if (balance < totalCost) {
+        logger(`System | Warning: ${$} | Insufficient balance (${balanceEth} PHRS) for ${global.maxTransaction} swaps of ${amountStr} PHRS plus gas`);
+        continue;
+      }
+
       let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDT.slice(2).padStart(64, "0");
       let n = i.toString(16).padStart(64, "0");
       let l =
@@ -113,19 +203,61 @@ async function performSwapUSDT(logger) {
       let d = ["function multicall(uint256 deadline, bytes[] calldata data) payable"];
       let p = new e.Contract(contract.SWAP, d, r);
       let f = p.interface.encodeFunctionData("multicall", [c, [l]]);
-      await pharos.provider().getFeeData();
+
       for (let w = 1; w <= global.maxTransaction; w++) {
         logger(`System | ${$} | Initiating Swap ${amountStr} PHRS to USDT (${w}/${global.maxTransaction})`);
-        let g = {
-          to: p.target,
-          data: f,
-          value: i,
-        };
-        g.gasLimit = (await pharos.provider().estimateGas(g)) * 12n / 10n;
-        let m = await r.sendTransaction(g);
-        await m.wait(1);
-        logger(`System | ${$} | ${etc.timelog()} | Swap Confirmed: ${chalk.green(pharos.explorer.tx(m.hash))}`);
-        await etc.delay(5e3);
+
+        let success = false;
+        let attempt = 0;
+
+        while (!success && attempt < maxRetries) {
+          try {
+            attempt++;
+            let g = {
+              to: p.target,
+              data: f,
+              value: i,
+            };
+
+            // Estimate gas with retry
+            let gasLimit;
+            try {
+              gasLimit = (await provider.estimateGas(g)) * 12n / 10n; // 20% buffer
+            } catch (gasError) {
+              if (attempt < maxRetries) {
+                logger(`System | ${$} | Gas estimation failed (attempt ${attempt}/${maxRetries}): ${chalk.yellow(gasError.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+                await etc.delay(retryDelay);
+                continue;
+              } else {
+                throw new Error(`Gas estimation failed after ${maxRetries} attempts: ${gasError.message}`);
+              }
+            }
+
+            g.gasLimit = gasLimit;
+
+            // Send transaction
+            let m = await r.sendTransaction(g);
+            let receipt = await m.wait(1);
+            logger(`System | ${$} | ${etc.timelog()} | Swap Confirmed: ${chalk.green(pharos.explorer.tx(m.hash))}`);
+            success = true;
+          } catch (u) {
+            if (attempt < maxRetries) {
+              logger(`System | ${$} | Swap attempt ${attempt}/${maxRetries} failed: ${chalk.yellow(u.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+              await etc.delay(retryDelay);
+              continue;
+            } else {
+              logger(`System | ${$} | ${etc.timelog()} | Swap failed after ${maxRetries} attempts: ${chalk.red(u.message)}`);
+              break;
+            }
+          }
+        }
+
+        if (!success) {
+          logger(`System | ${$} | Skipping remaining swaps due to repeated failures`);
+          break;
+        }
+
+        await etc.delay(transactionDelay); // Reduced delay for faster transactions
       }
     } catch (u) {
       logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(u.message)}`);

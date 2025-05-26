@@ -1,199 +1,957 @@
-const chalk = require("chalk").default || require("chalk");
-const path = require("path");
 const fs = require("fs");
-const readline = require("readline");
-const service = require("./service");// ---- MENU OPTIONS (Clean, No Emojis) ----
-const menuOptions = [
-  { label: "Account Login", value: "accountLogin" },
-  { label: "Account Check-in", value: "accountCheckIn" },
-  { label: "Account Check", value: "accountCheck" },
-  { label: "Claim Faucet PHRS", value: "accountClaimFaucet" },
-  { label: "Claim Faucet USDC", value: "claimFaucetUSDC" },
-  { label: "Swap PHRS to USDC", value: "performSwapUSDC" },
-  { label: "Swap PHRS to USDT", value: "performSwapUSDT" },
-  { label: "Add Liquidity PHRS-USDC", value: "addLpUSDC" },
-  { label: "Add Liquidity PHRS-USDT", value: "addLpUSDT" },
-  { label: "Random Transfer", value: "randomTransfer" },
-  { label: "Social Task", value: "socialTask" },
-  { label: "Unlimited Faucet", value: "unlimitedFaucet" },
-  { label: "Set Transaction Count", value: "setTransactionCount" },
-  { label: "Exit", value: "exit" },
-];// ---- BANNER ----
-const asciiBannerLines = [
-  "██████╗     ██╗  ██╗     █████╗     ██████╗      ██████╗     ███████╗",
-  "██╔══██╗    ██║  ██║    ██╔══██╗    ██╔══██╗    ██╔═══██╗    ██╔════╝",
-  "██████╔╝    ███████║    ███████║    ██████╔╝    ██║   ██║    ███████╗",
-  "██╔═══╝     ██╔══██║    ██╔══██║    ██╔══██╗    ██║   ██║    ╚════██║",
-  "██║         ██║  ██║    ██║  ██║    ██║  ██║    ╚██████╔╝    ███████║",
-  "╚═╝         ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚═╝  ╚═╝     ╚═════╝     ╚══════╝",
-  "",
-  "       Pharos Testnet Bot v2.0 - Creatd By ADB NODE      ",
-  "                  LETS FUCK THIS TESTNET                   ",
-];// ---- GLOBAL VARIABLES ----
-global.selectedWallets = [];
-global.maxTransaction = 5;// ---- UTILITY FUNCTIONS ----
-// Load wallets
-function loadWallets() {
-  try {
-    const walletPath = path.join(__dirname, "wallet.json");
-    const data = fs.readFileSync(walletPath, "utf8");
-    const json = JSON.parse(data);
-    global.selectedWallets = json.wallets || [];
-    return global.selectedWallets;
-  } catch {
-    return [];
-  }
-}// Format log messages with vibrant colors
-function formatLogMessage(msg) {
-  const timestamp = new Date().toLocaleTimeString("en-US", { hour12: false });
-  msg = (msg || "").toString().trim();
-  if (!msg) return chalk.hex("#CCCCCC")([${timestamp}] Empty log);  const parts = msg.split("|").map((s) => s?.trim() || "");
-  const walletName = parts[0] || "System";  // Transaction Confirmation or Success (Green)
-  if (parts.length >= 3 && (parts[2]?.includes("Confirmed") || parts[2]?.includes("claimed successfully"))) {
-    const logParts = parts[2].split(/Confirmed:|claimed successfully:/);
-    const message = logParts[0]?.trim() || "";
-    const hashPart = logParts[1]?.trim() || "";
-    return chalk.green.bold(
-      [${timestamp}] ${walletName.padEnd(25)} | ${message}${hashPart ? "Confirmed: " : "claimed successfully: "}${chalk.greenBright.bold(hashPart || "0.2 PHRS")}
-    );
-  }  // Transaction Initiation (Purple)
-  if (
-    parts.length >= 2 &&
-    (parts[1]?.includes("Initiating") || parts[1]?.includes("Claiming") || parts[1]?.includes("Checking") || parts[1]?.includes("Generating"))
-  ) {
-    return chalk.hex("#C71585").bold(
-      [${timestamp}] ${walletName.padEnd(25)} | ${parts[1]}
-    );
-  }  // Warnings (Yellow)
-  if (parts.length >= 2 && parts[1]?.includes("Warning")) {
-    return chalk.yellow.bold(
-      [${timestamp}] ${walletName.padEnd(25)} | ${parts.slice(1).join(" | ")}
-    );
-  }  // Errors (Red)
-  if (msg.includes("Error") || msg.includes("Failed")) {
-    const errorMsg = parts.length > 2 ? parts.slice(2).join(" | ").replace(/\d{2}:\d{2}:\d{2}\s*\|\s*\d{2}-\d{2}-\d{4}/, "").trim() : msg;
-    return chalk.red.bold(
-      [${timestamp}] ${walletName.padEnd(25)} | ${errorMsg}
-    );
-  }  // System Messages (Gray)
-  return chalk.hex("#CCCCCC")(
-    [${timestamp}] ${walletName.padEnd(25)} | ${parts.slice(parts.length >= 2 ? 1 : 0).join(" | ") || msg}
-  );
-}// Spinner animation
-const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-function createSpinner(text) {
-  let frameIndex = 0;
-  let stopped = false;  const interval = setInterval(() => {
-    if (stopped) return;
-    process.stdout.write(\r${chalk.green(spinnerFrames[frameIndex])} ${chalk.greenBright(text)});
-    frameIndex = (frameIndex + 1) % spinnerFrames.length;
-  }, 100);  return {
-    stop: () => {
-      stopped = true;
-      clearInterval(interval);
-      process.stdout.write("\r\x1b[K"); // Clear line
-    },
-  };
-}// Readline interface
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});// Input prompt
-function requestInput(promptText, type = "text", defaultValue = "") {
+const path = require("path");
+const qs = require("querystring");
+const { ethers: e } = require("ethers");
+const chalk = require("chalk").default || require("chalk");
+const axios = require("axios");
+const FakeUserAgent = require("fake-useragent");
+const chains = require("./chains");
+const pharos = chains.testnet.pharos;
+const etc = chains.utils.etc;
+const abi = chains.utils.abi;
+const contract = chains.utils.contract;
+
+// Constants for Unlimited Faucet
+const BASE_API = "https://api.pharosnetwork.xyz";
+const REF_CODE = "PNFXEcz1CWezuu3g";
+const RPC_URL = "https://testnet.dplabs-internal.com";
+
+// Utility to generate random amount in range (inclusive, in PHRS)
+function getRandomAmount(min, max) {
+  const amount = (Math.random() * (max - min) + min).toFixed(4); // 4 decimal places
+  return e.parseEther(amount);
+}
+
+// Utility to mask address
+function maskAddress(address) {
+  return address ? `${address.slice(0, 6)}${'*'.repeat(6)}${address.slice(-6)}` : "Unknown";
+}
+
+// Utility to ask for input (used for wallet generation)
+async function askQuestion(question, logger) {
+  const readline = require("readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
   return new Promise((resolve) => {
-    rl.question(chalk.greenBright(${promptText}${defaultValue ?  [${defaultValue}]: ""}:), (value) => {
-      if (type === "number") value = Number(value);
-      if (value === "" || (type === "number" && isNaN(value))) value = defaultValue;
-      resolve(value);
+    rl.question(chalk.greenBright(`${question}: `), (answer) => {
+      rl.close();
+      resolve(answer);
     });
   });
-}// Display banner
-function displayBanner() {
-  console.clear();
-  console.log(chalk.hex("#D8BFD8").bold(asciiBannerLines.join("\n")));
-  console.log();
-}// Display menu
-function displayMenu() {
-  console.log(chalk.blueBright.bold("\n>═══ Pharos Testnet Bot Menu ═══<"));
-  menuOptions.forEach((opt, idx) => {
-    const optionNumber = ${idx + 1}.padStart(2, '0'); // Two-digit numbering
-    console.log(chalk.blue(  ${optionNumber} > ${opt.label.padEnd(35)} <));
-  });
-  console.log(chalk.blueBright.bold(">═══════════════════════════════<\n"));
-}// ---- MAIN ----
-async function main() {
-  // Logger
-  const logger = (message) => console.log(formatLogMessage(message));  // Initialize
-  displayBanner();
-  loadWallets();
-  logger(System | Pharos Bot started. Wallets loaded: ${global.selectedWallets.length});  // Initial transaction count
-  const txCount = await requestInput("Enter number of transactions", "number", "5");
-  if (isNaN(txCount) || txCount <= 0) {
-    global.maxTransaction = 5;
-    logger("System | Invalid transaction count. Using default: 5");
-  } else {
-    global.maxTransaction = txCount;
-    logger(System | Set transaction count to: ${txCount});
-  }  // Main loop
-  while (true) {
-    displayBanner();
-    displayMenu();
-    const choice = await requestInput("Select an option (1-13)", "number");
-    const idx = choice - 1;
-
-if (isNaN(idx) || idx < 0 || idx >= menuOptions.length) {
-  logger("System | Invalid option. Try again.");
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  continue;
 }
 
-const selected = menuOptions[idx];
-if (selected.value === "exit") {
-  logger("System | Exiting...");
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  rl.close();
-  process.exit(0);
-}
+async function performSwapUSDC(logger) {
+  const maxRetries = 3; // Number of retry attempts for provider operations
+  const retryDelay = 5000; // Delay between retries (5 seconds)
+  const transactionDelay = 3000; // Reduced delay between transactions (3 seconds)
 
-if (selected.value === "setTransactionCount") {
-  const newTxCount = await requestInput("Enter number of transactions", "number", global.maxTransaction.toString());
-  if (isNaN(newTxCount) || newTxCount <= 0) {
-    logger("System | Invalid transaction count. Keeping current: " + global.maxTransaction);
-  } else {
-    global.maxTransaction = newTxCount;
-    logger(`System | Set transaction count to: ${newTxCount}`);
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
+      continue;
+    }
+    try {
+      // Initialize wallet and provider
+      let provider = new e.JsonRpcProvider(RPC_URL, { chainId: 688688, name: "pharos-testnet" });
+      let r = new e.Wallet(t, provider);
+      let o = r.address;
+
+      // Check wallet balance
+      let balance = await provider.getBalance(o);
+      let balanceEth = e.formatEther(balance);
+      logger(`System | ${$} | Wallet balance: ${balanceEth} PHRS`);
+
+      let i = getRandomAmount(0.0001, 0.0003); // Random amount between 0.0001 and 0.0003 PHRS
+      let amountStr = e.formatEther(i);
+
+      // Estimate gas cost for a single transaction
+      let gasPrice = await provider.getFeeData();
+      let estimatedGasLimit = BigInt(200000); // Conservative estimate for swap
+      let gasCost = gasPrice.gasPrice * estimatedGasLimit;
+      let totalCost = i + gasCost * BigInt(global.maxTransaction);
+
+      if (balance < totalCost) {
+        logger(`System | Warning: ${$} | Insufficient balance (${balanceEth} PHRS) for ${global.maxTransaction} swaps of ${amountStr} PHRS plus gas`);
+        continue;
+      }
+
+      let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDC.slice(2).padStart(64, "0");
+      let n = i.toString(16).padStart(64, "0");
+      let l =
+        "0x04e45aaf" +
+        s +
+        "0000000000000000000000000000000000000000000000000000000000000bb8" +
+        o.toLowerCase().slice(2).padStart(64, "0") +
+        n +
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+      let c = Math.floor(Date.now() / 1e3) + 600;
+      let d = ["function multicall(uint256 deadline, bytes[] calldata data) payable"];
+      let p = new e.Contract(contract.SWAP, d, r);
+      let f = p.interface.encodeFunctionData("multicall", [c, [l]]);
+
+      for (let w = 1; w <= global.maxTransaction; w++) {
+        logger(`System | ${$} | Initiating Swap ${amountStr} PHRS to USDC (${w}/${global.maxTransaction})`);
+
+        let success = false;
+        let attempt = 0;
+
+        while (!success && attempt < maxRetries) {
+          try {
+            attempt++;
+            let g = {
+              to: p.target,
+              data: f,
+              value: i,
+            };
+
+            // Estimate gas with retry
+            let gasLimit;
+            try {
+              gasLimit = (await provider.estimateGas(g)) * 12n / 10n; // 20% buffer
+            } catch (gasError) {
+              if (attempt < maxRetries) {
+                logger(`System | ${$} | Gas estimation failed (attempt ${attempt}/${maxRetries}): ${chalk.yellow(gasError.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+                await etc.delay(retryDelay);
+                continue;
+              } else {
+                throw new Error(`Gas estimation failed after ${maxRetries} attempts: ${gasError.message}`);
+              }
+            }
+
+            g.gasLimit = gasLimit;
+
+            // Send transaction
+            let m = await r.sendTransaction(g);
+            let receipt = await m.wait(1);
+            logger(`System | ${$} | ${etc.timelog()} | Swap Confirmed: ${chalk.green(pharos.explorer.tx(m.hash))}`);
+            success = true;
+          } catch (u) {
+            if (attempt < maxRetries) {
+              logger(`System | ${$} | Swap attempt ${attempt}/${maxRetries} failed: ${chalk.yellow(u.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+              await etc.delay(retryDelay);
+              continue;
+            } else {
+              logger(`System | ${$} | ${etc.timelog()} | Swap failed after ${maxRetries} attempts: ${chalk.red(u.message)}`);
+              break;
+            }
+          }
+        }
+
+        if (!success) {
+          logger(`System | ${$} | Skipping remaining swaps due to repeated failures`);
+          break;
+        }
+
+        await etc.delay(transactionDelay); // Reduced delay for faster transactions
+      }
+    } catch (u) {
+      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(u.message)}`);
+    }
   }
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  continue;
 }
 
-try {
-  const spinner = createSpinner(`Running ${selected.label}...`);
-  logger(`System | Starting ${selected.label}...`);
-  const scriptFunc = service[selected.value];
-  if (scriptFunc) {
-    await scriptFunc(logger);
-    logger(`System | ${selected.label} completed.`);
-  } else {
-    logger(`System | Error: ${selected.label} not implemented.`);
+async function performSwapUSDT(logger) {
+  const maxRetries = 3; // Number of retry attempts for provider operations
+  const retryDelay = 5000; // Delay between retries (5 seconds)
+  const transactionDelay = 3000; // Reduced delay between transactions (3 seconds)
+
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
+      continue;
+    }
+    try {
+      // Initialize wallet and provider
+      let provider = new e.JsonRpcProvider(RPC_URL, { chainId: 688688, name: "pharos-testnet" });
+      let r = new e.Wallet(t, provider);
+      let o = r.address;
+
+      // Check wallet balance
+      let balance = await provider.getBalance(o);
+      let balanceEth = e.formatEther(balance);
+      logger(`System | ${$} | Wallet balance: ${balanceEth} PHRS`);
+
+      let i = getRandomAmount(0.0001, 0.0003); // Random amount between 0.0001 and 0.0003 PHRS
+      let amountStr = e.formatEther(i);
+
+      // Estimate gas cost for a single transaction
+      let gasPrice = await provider.getFeeData();
+      let estimatedGasLimit = BigInt(200000); // Conservative estimate for swap
+      let gasCost = gasPrice.gasPrice * estimatedGasLimit;
+      let totalCost = i + gasCost * BigInt(global.maxTransaction);
+
+      if (balance < totalCost) {
+        logger(`System | Warning: ${$} | Insufficient balance (${balanceEth} PHRS) for ${global.maxTransaction} swaps of ${amountStr} PHRS plus gas`);
+        continue;
+      }
+
+      let s = contract.WPHRS.slice(2).padStart(64, "0") + contract.USDT.slice(2).padStart(64, "0");
+      let n = i.toString(16).padStart(64, "0");
+      let l =
+        "0x04e45aaf" +
+        s +
+        "0000000000000000000000000000000000000000000000000000000000000bb8" +
+        o.toLowerCase().slice(2).padStart(64, "0") +
+        n +
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+      let c = Math.floor(Date.now() / 1e3) + 600;
+      let d = ["function multicall(uint256 deadline, bytes[] calldata data) payable"];
+      let p = new e.Contract(contract.SWAP, d, r);
+      let f = p.interface.encodeFunctionData("multicall", [c, [l]]);
+
+      for (let w = 1; w <= global.maxTransaction; w++) {
+        logger(`System | ${$} | Initiating Swap ${amountStr} PHRS to USDT (${w}/${global.maxTransaction})`);
+
+        let success = false;
+        let attempt = 0;
+
+        while (!success && attempt < maxRetries) {
+          try {
+            attempt++;
+            let g = {
+              to: p.target,
+              data: f,
+              value: i,
+            };
+
+            // Estimate gas with retry
+            let gasLimit;
+            try {
+              gasLimit = (await provider.estimateGas(g)) * 12n / 10n; // 20% buffer
+            } catch (gasError) {
+              if (attempt < maxRetries) {
+                logger(`System | ${$} | Gas estimation failed (attempt ${attempt}/${maxRetries}): ${chalk.yellow(gasError.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+                await etc.delay(retryDelay);
+                continue;
+              } else {
+                throw new Error(`Gas estimation failed after ${maxRetries} attempts: ${gasError.message}`);
+              }
+            }
+
+            g.gasLimit = gasLimit;
+
+            // Send transaction
+            let m = await r.sendTransaction(g);
+            let receipt = await m.wait(1);
+            logger(`System | ${$} | ${etc.timelog()} | Swap Confirmed: ${chalk.green(pharos.explorer.tx(m.hash))}`);
+            success = true;
+          } catch (u) {
+            if (attempt < maxRetries) {
+              logger(`System | ${$} | Swap attempt ${attempt}/${maxRetries} failed: ${chalk.yellow(u.message)}. Retrying in ${retryDelay / 1000} seconds...`);
+              await etc.delay(retryDelay);
+              continue;
+            } else {
+              logger(`System | ${$} | ${etc.timelog()} | Swap failed after ${maxRetries} attempts: ${chalk.red(u.message)}`);
+              break;
+            }
+          }
+        }
+
+        if (!success) {
+          logger(`System | ${$} | Skipping remaining swaps due to repeated failures`);
+          break;
+        }
+
+        await etc.delay(transactionDelay); // Reduced delay for faster transactions
+      }
+    } catch (u) {
+      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(u.message)}`);
+    }
   }
-  spinner.stop();
-} catch (e) {
-  logger(`System | Error in ${selected.label}: ${chalk.red(e.message)}`);
-  spinner.stop();
 }
 
-await requestInput("Press Enter to continue...");
-
+async function checkBalanceAndApprove(a, t, $, logger) {
+  let r = new e.Contract(t, abi.ERC20, a);
+  let o = await r.allowance(a.address, $);
+  if (0n === o) {
+    logger(`System | Approving token for ${a.address}`);
+    let i = e.MaxUint256;
+    try {
+      let s = await r.approve($, i);
+      await s.wait(1);
+      await etc.delay(3e3);
+      logger(`System | Approval successful for ${a.address}`);
+    } catch (n) {
+      logger(`System | Approval failed: ${chalk.red(n.message)}`);
+      return false;
+    }
   }
-}// ---- Run ----
-(async () => {
+  return true;
+}
+
+async function addLpUSDC(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
+      continue;
+    }
+    try {
+      let r = new e.Wallet(t, pharos.provider());
+      let o = new e.Contract(contract.ROUTER, abi.ROUTER, r);
+      let i = Math.floor(Date.now() / 1e3) + 1800;
+      let l = await checkBalanceAndApprove(r, contract.USDC, contract.ROUTER, logger);
+      if (!l) {
+        continue;
+      }
+      let amount = getRandomAmount(0.2, 0.5); // Random amount between 0.2 and 0.5
+      let amountStr = e.formatEther(amount);
+      let c = {
+        token0: contract.WPHRS,
+        token1: contract.USDC,
+        fee: 500,
+        tickLower: -887220,
+        tickUpper: 887220,
+        amount0Desired: amount.toString(),
+        amount1Desired: amount.toString(),
+        amount0Min: "0",
+        amount1Min: "0",
+        recipient: r.address,
+        deadline: i,
+      };
+      let d = o.interface.encodeFunctionData("mint", [c]);
+      let p = o.interface.encodeFunctionData("refundETH", []);
+      let f = [d, p];
+      for (let w = 1; w <= global.maxTransaction; w++) {
+        logger(
+          `System | ${$} | Initiating Add Liquidity ${amountStr} PHRS + ${amountStr} USDC (${w}/${global.maxTransaction})`
+        );
+        let g = await o.multicall(f, {
+          value: amount,
+          gasLimit: 5e5,
+        });
+        await g.wait(1);
+        logger(`System | ${$} | ${etc.timelog()} | Liquidity Added: ${chalk.green(pharos.explorer.tx(g.hash))}`);
+        await etc.delay(5e3);
+      }
+    } catch (m) {
+      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(m.message)}`);
+    }
+  }
+}
+
+async function addLpUSDT(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing data"} due to missing private key`);
+      continue;
+    }
+    try {
+      let r = new e.Wallet(t, pharos.provider());
+      let o = new e.Contract(contract.ROUTER, abi.ROUTER, r);
+      let i = Math.floor(Date.now() / 1e3) + 1800;
+      let l = await checkBalanceAndApprove(r, contract.USDT, contract.ROUTER, logger);
+      if (!l) {
+        continue;
+      }
+      let amount = getRandomAmount(0.2, 0.5); // Random amount between 0.2 and 0.5
+      let amountStr = e.formatEther(amount);
+      let c = {
+        token0: contract.WPHRS,
+        token1: contract.USDT,
+        fee: 500,
+        tickLower: -887220,
+        tickUpper: 887220,
+        amount0Desired: amount.toString(),
+        amount1Desired: amount.toString(),
+        amount0Min: "0",
+        amount1Min: "0",
+        recipient: r.address,
+        deadline: i,
+      };
+      let d = o.interface.encodeFunctionData("mint", [c]);
+      let p = o.interface.encodeFunctionData("refundETH", []);
+      let f = [d, p];
+      for (let w = 1; w <= global.maxTransaction; w++) {
+        logger(
+          `System | ${$} | Initiating Add Liquidity ${amountStr} PHRS + ${amountStr} USDT (${w}/${global.maxTransaction})`
+        );
+        let g = await o.multicall(f, {
+          value: amount,
+          gasLimit: 5e5,
+        });
+        await g.wait(1);
+        logger(`System | ${$} | ${etc.timelog()} | Liquidity Added: ${chalk.green(pharos.explorer.tx(g.hash))}`);
+        await etc.delay(5e3);
+      }
+    } catch (m) {
+      logger(`System | ${$} | ${etc.timelog()} | Error: ${chalk.red(m.message)}`);
+    }
+  }
+}
+
+async function randomTransfer(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing private key"} due to missing private key`);
+      continue;
+    }
+    try {
+      let r = new e.Wallet(t, pharos.provider());
+      let o = pharos.provider();
+      let s = e.parseEther("0.000001");
+      let n = await o.getBalance(r.address);
+      if (n < s * BigInt(global.maxTransaction)) {
+        logger(
+          `System | Warning: ${$} | Insufficient balance (${e.formatEther(
+            n
+          )}) to transfer 0.000001 PHRS x ${global.maxTransaction} times`
+        );
+        continue;
+      }
+      for (let l = 1; l <= global.maxTransaction; l++) {
+        let c = e.Wallet.createRandom();
+        let d = c.address;
+        logger(`System | ${$} | Initiating Transfer 0.000001 PHRS to ${d} (${l}/${global.maxTransaction})`);
+        let p = await r.sendTransaction({
+          to: d,
+          value: s,
+          gasLimit: 21e3,
+          gasPrice: 0,
+        });
+        await p.wait(1);
+        logger(`System | ${$} | ${etc.timelog()} | Transfer Confirmed: ${chalk.green(pharos.explorer.tx(p.hash))}`);
+        await etc.delay(5e3);
+      }
+    } catch (f) {
+      logger(`System | ${$} | ${etc.timelog()} | Transfer Error: ${chalk.red(f.message)}`);
+    }
+  }
+}
+
+async function accountCheck(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, token: $, name: r } = a;
+    if (!t || !$) {
+      logger(`System | Warning: Skipping ${r || "wallet with missing data"} due to missing data`);
+      continue;
+    }
+    try {
+      let o = new e.Wallet(t, pharos.provider());
+      logger(`System | ${r} | Checking Profile Stats for ${o.address}`);
+      let s = {
+        ...etc.headers,
+        authorization: `Bearer ${$}`,
+      };
+      let n = await axios.get(`https://api.pharosnetwork.xyz/user/profile?address=${o.address}`, {
+        headers: s,
+      });
+      let l = n.data;
+      if (0 !== l.code || !l.data.user_info) {
+        logger(`System | ${r} | Profile check failed: ${chalk.red(l.msg)}`);
+        continue;
+      }
+      let { ID: c, TotalPoints: d, TaskPoints: p, InvitePoints: f } = l.data.user_info;
+      logger(
+        `System | ${r} | ${etc.timelog()} | ID: ${c}, TotalPoints: ${d}, TaskPoints: ${p}, InvitePoints: ${f}`
+      );
+      await etc.delay(5e3);
+    } catch (w) {
+      if (axios.isAxiosError(w)) {
+        logger(
+          `System | ${r} | ${etc.timelog()} | HTTP Error: ${chalk.red(
+            `${w.response?.status} - ${w.response?.data?.message || w.message}`
+          )}`
+        );
+      } else {
+        logger(`System | ${r} | ${etc.timelog()} | Error: ${chalk.red(w.message)}`);
+      }
+    }
+    await etc.delay(5e3);
+  }
+}
+
+async function accountLogin(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, token: $, name: r } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${r || "wallet with missing private key"} due to missing private key`);
+      continue;
+    }
+    if (!$) {
+      logger(`System | ${r} | No token found. Attempting login`);
+      await etc.delay(3e3);
+      try {
+        let o = new e.Wallet(t, pharos.provider());
+        let i = await o.signMessage("pharos");
+        logger(`System | ${r} | Logging in to Pharos for ${o.address}`);
+        let n = {
+          ...etc.headers,
+        };
+        let l = await axios.post(
+          `https://api.pharosnetwork.xyz/user/login?address=${o.address}&signature=${i}&invite_code=rmKeUmr3VL7bLeva`,
+          null,
+          { headers: n }
+        );
+        let c = l.data;
+        if (0 !== c.code || !c.data?.jwt) {
+          logger(`System | ${r} | Login failed: ${chalk.red(c.msg)}`);
+          continue;
+        }
+        a.token = c.data.jwt;
+        logger(`System | ${r} | Login successful`);
+      } catch (p) {
+        logger(`System | ${r} | ${etc.timelog()} | Login error: ${chalk.red(p.message)}`);
+      }
+    }
+  }
+  let f = path.join(__dirname, "./wallet.json");
   try {
-    await main();
-  } catch (error) {
-    console.error(chalk.red(Fatal error: ${error.message}));
-    rl.close();
-    process.exit(1);
+    let w = JSON.parse(fs.readFileSync(f, "utf8"));
+    let g = w.wallets || [];
+    for (let m of global.selectedWallets) {
+      if (!m.privatekey && !m.name) {
+        continue;
+      }
+      let u = g.findIndex((e) => e.privatekey.trim().toLowerCase() === m.privatekey.trim().toLowerCase());
+      if (-1 !== u) {
+        g[u].token = m.token || "";
+      }
+    }
+    fs.writeFileSync(f, JSON.stringify({ wallets: g }, null, 2), "utf8");
+    logger(`System | Updated wallet.json with new tokens`);
+  } catch (h) {
+    logger(`System | Failed to update wallet.json: ${chalk.red(h.message)}`);
   }
-})();
+  await etc.delay(5e3);
+}
 
+async function accountCheckIn(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, token: $, name: r } = a;
+    if (!t || !$) {
+      logger(`System | Warning: Skipping ${r || "wallet with missing data"} due to missing data`);
+      continue;
+    }
+    try {
+      let o = new e.Wallet(t, pharos.provider());
+      logger(`System | ${r} | Checking in for ${o.address}`);
+      let s = {
+        ...etc.headers,
+        authorization: `Bearer ${$}`,
+      };
+      let n = await axios.post(`https://api.pharosnetwork.xyz/sign/in?address=${o.address}`, null, {
+        headers: s,
+      });
+      let l = n.data;
+      if (0 === l.code) {
+        logger(`System | ${r} | ${etc.timelog()} | Check-in successful: ${l.msg}`);
+      } else if (l.msg?.toLowerCase().includes("already")) {
+        logger(`System | ${r} | ${etc.timelog()} | Already checked in`);
+      } else {
+        logger(`System | ${r} | ${etc.timelog()} | Check-in failed: ${chalk.red(l.msg || "Unknown error")}`);
+      }
+    } catch (c) {
+      if (axios.isAxiosError(c)) {
+        logger(
+          `System | ${r} | ${etc.timelog()} | HTTP Error: ${chalk.red(
+            `${c.response?.status} - ${c.response?.data?.message || c.message}`
+          )}`
+        );
+      } else {
+        logger(`System | ${r} | ${etc.timelog()} | Error: ${chalk.red(c.message)}`);
+      }
+    }
+    await etc.delay(5e3);
+  }
+}
+
+async function claimFaucetUSDC(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, name: $ } = a;
+    if (!t) {
+      logger(`System | Warning: Skipping ${$ || "wallet with missing private key"} due to missing private key`);
+      continue;
+    }
+    let r = new e.Wallet(t, pharos.provider());
+    try {
+      logger(`System | ${$} | Claiming USDC for ${r.address}`);
+      let o = await axios.post(
+        "https://testnet-router.zenithswap.xyz/api/v1/faucet",
+        {
+          tokenAddress: "0xAD902CF99C2dE2f1Ba5ec4D642Fd7E49cae9EE37",
+          userAddress: r.address,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...etc.headers,
+          },
+        }
+      );
+      let i = o.data;
+      if (200 === i.status && i.data?.txHash) {
+        logger(`System | ${$} | ${etc.timelog()} | USDC Claimed | TxHash: ${chalk.green(pharos.explorer.tx(i.data.txHash))}`);
+      } else {
+        logger(`System | ${$} | ${etc.timelog()} | USDC Claim failed: ${chalk.red(i.message || "Unknown error")}`);
+      }
+    } catch (s) {
+      if (axios.isAxiosError(s)) {
+        let n = s.response?.data?.message || s.message;
+        logger(`System | ${$} | ${etc.timelog()} | USDC Claim Error: ${chalk.red(n)}`);
+      } else {
+        logger(`System | ${$} | ${etc.timelog()} | USDC Claim Unexpected error: ${chalk.red(s.message)}`);
+      }
+    }
+    await etc.delay(5e3);
+  }
+}
+
+async function socialTask(logger) {
+  let a = [201, 202, 203, 204];
+  for (let t of global.selectedWallets || []) {
+    let { privatekey: $, token: r, name: o } = t;
+    if (!$ || !r) {
+      logger(`System | Warning: Skipping ${o || "wallet with missing data"} due to missing data`);
+      continue;
+    }
+    let i = new e.Wallet($, pharos.provider());
+    for (let s of a) {
+      try {
+        logger(`System | ${o} | Verifying task ${s} for ${i.address}`);
+        let n = qs.stringify({
+          address: i.address,
+          task_id: s,
+        });
+        let l = await axios.post("https://api.pharosnetwork.xyz/task/verify", n, {
+          headers: {
+            ...etc.headers,
+            authorization: `Bearer ${r}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+        });
+        let c = l.data;
+        if (0 === c.code && c.data?.verified) {
+          logger(`System | ${o} | ${etc.timelog()} | Task ${s} verified successfully for ${i.address}`);
+        } else {
+          logger(`System | ${o} | ${etc.timelog()} | Task ${s} verification failed: ${chalk.red(c.msg || "Unknown error")}`);
+        }
+      } catch (d) {
+        if (axios.isAxiosError(d)) {
+          let p = d.response?.data?.msg || d.message;
+          logger(`System | ${o} | ${etc.timelog()} | Task ${s} HTTP Error: ${chalk.red(p)}`);
+        } else {
+          logger(`System | ${o} | ${etc.timelog()} | Task ${s} Unexpected error: ${chalk.red(d.message)}`);
+        }
+      }
+      await etc.countdown(15e3, "Countdown");
+    }
+  }
+}
+
+async function accountClaimFaucet(logger) {
+  for (let a of global.selectedWallets || []) {
+    let { privatekey: t, token: $, name: r } = a;
+    if (!t || !$) {
+      logger(`System | Warning: Skipping ${r || "wallet with missing data"} due to missing data`);
+      continue;
+    }
+    try {
+      let o = new e.Wallet(t, pharos.provider());
+      logger(`System | ${r} | Checking Faucet status for ${o.address}`);
+      let s = {
+        ...etc.headers,
+        authorization: `Bearer ${$}`,
+      };
+      let n = await axios.get(`https://api.pharosnetwork.xyz/faucet/status?address=${o.address}`, {
+        headers: s,
+      });
+      let l = n.data;
+      if (0 !== l.code || !l.data) {
+        logger(`System | ${r} | Faucet status check failed: ${chalk.red(l.msg || "Unknown error")}`);
+        continue;
+      }
+      if (!l.data.is_able_to_faucet) {
+        let c = new Date(1e3 * l.data.avaliable_timestamp).toLocaleString("en-US", {
+          timeZone: "Asia/Jakarta",
+        });
+        logger(`System | ${r} | Faucet not available. Next available: ${c}`);
+        continue;
+      }
+      logger(`System | ${r} | Claiming Faucet for ${o.address}`);
+      let p = await axios.post(`https://api.pharosnetwork.xyz/faucet/daily?address=${o.address}`, null, {
+        headers: s,
+      });
+      let f = p.data;
+      if (0 === f.code) {
+        logger(`System | ${r} | Faucet claimed successfully`);
+      } else {
+        logger(`System | ${r} | Faucet claim failed: ${chalk.red(f.msg || "Unknown error")}`);
+      }
+    } catch (w) {
+      if (axios.isAxiosError(w)) {
+        logger(
+          `System | ${r} | ${etc.timelog()} | HTTP Error: ${chalk.red(
+            `${w.response?.status} - ${w.response?.data?.message || w.message}`
+          )}`
+        );
+      } else {
+        logger(`System | ${r} | ${etc.timelog()} | Error: ${chalk.red(w.message)}`);
+      }
+    }
+    await etc.delay(5e3);
+  }
+}
+
+async function unlimitedFaucet(logger) {
+  const provider = new e.JsonRpcProvider(RPC_URL, { chainId: 688688, name: "pharos-testnet" });
+  const headers = {
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+    Origin: "https://testnet.pharosnetwork.xyz",
+    Referer: "https://testnet.pharosnetwork.xyz/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+    "User-Agent": new FakeUserAgent().random,
+  };
+
+  // Step 1: Generate wallets
+  logger(`System | Initiating wallet generation`);
+  logger(`System | --------------------------------------------`);
+  const numWallets = parseInt(await askQuestion("How many wallets do you want to create? (0 to skip)", logger));
+  if (numWallets > 0) {
+    const wallets = [];
+    for (let i = 0; i < numWallets; i++) {
+      const wallet = e.Wallet.createRandom();
+      wallets.push(wallet.privateKey);
+      logger(`System | Generated wallet ${i + 1}/${numWallets}: ${chalk.green(maskAddress(wallet.address))}`);
+    }
+    try {
+      fs.appendFileSync("address.txt", wallets.join("\n") + "\n");
+      logger(`System | Saved ${numWallets} wallets to address.txt`);
+    } catch (e) {
+      logger(`System | Error saving to address.txt: ${chalk.red(e.message)}`);
+      return;
+    }
+    logger(`System | --------------------------------------------`);
+    await etc.delay(3e3);
+  }
+
+  // Step 2: Claim faucets
+  let successfulClaims = 0;
+  let failedClaims = 0;
+  let processedCount = 0;
+
+  if (!fs.existsSync("address.txt")) {
+    logger(`System | Warning: address.txt not found. Please generate wallets first.`);
+    return;
+  }
+
+  const privateKeys = fs.readFileSync("address.txt", "utf8").split("\n").filter(Boolean);
+  logger(`System | Total wallets to process for faucet claims: ${privateKeys.length}`);
+  logger(`System | --------------------------------------------`);
+
+  for (const privateKey of privateKeys) {
+    if (!privateKey) continue;
+    processedCount++;
+    let walletName = `Wallet${processedCount}`;
+    try {
+      const wallet = new e.Wallet(privateKey, provider);
+      const address = wallet.address;
+      logger(`System | ${walletName} | Processing wallet [${processedCount}/${privateKeys.length}]: ${chalk.green(maskAddress(address))}`);
+
+      // Generate login URL
+      const message = "pharos";
+      const signature = await wallet.signMessage(message);
+      const urlLogin = `${BASE_API}/user/login?address=${address}&signature=${signature}&invite_code=${REF_CODE}`;
+
+      // Login
+      logger(`System | ${walletName} | Initiating login`);
+      let token = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const response = await axios.post(urlLogin, null, {
+            headers: { ...headers, Authorization: "Bearer null", "Content-Length": "0" },
+            timeout: 120000,
+          });
+          token = response.data.data.jwt;
+          logger(`System | ${walletName} | Login successful`);
+          break;
+        } catch (e) {
+          if (attempt < 4) {
+            await etc.delay(5000);
+            continue;
+          }
+          logger(`System | ${walletName} | Login failed: ${chalk.red(e.message)}`);
+          failedClaims++;
+          continue;
+        }
+      }
+      if (!token) {
+        logger(`System | ${walletName} | Skipping faucet claim due to login failure`);
+        logger(`System | --------------------------------------------`);
+        continue;
+      }
+
+      // Check faucet status
+      logger(`System | ${walletName} | Checking faucet status`);
+      let faucetStatus = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const response = await axios.get(`${BASE_API}/faucet/status?address=${address}`, {
+            headers: { ...headers, Authorization: `Bearer ${token}` },
+            timeout: 120000,
+          });
+          faucetStatus = response.data;
+          break;
+        } catch (e) {
+          if (attempt < 4) {
+            await etc.delay(5000);
+            continue;
+          }
+          logger(`System | ${walletName} | Failed to get faucet status: ${chalk.red(e.message)}`);
+          failedClaims++;
+          continue;
+        }
+      }
+      if (!faucetStatus) {
+        logger(`System | ${walletName} | Skipping faucet claim due to status check failure`);
+        logger(`System | --------------------------------------------`);
+        continue;
+      }
+
+      if (faucetStatus.msg === "ok" && faucetStatus.data?.is_able_to_faucet) {
+        logger(`System | ${walletName} | Initiating faucet claim`);
+        let claim = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            const response = await axios.post(`${BASE_API}/faucet/daily?address=${address}`, null, {
+              headers: { ...headers, Authorization: `Bearer ${token}`, "Content-Length": "0" },
+              timeout: 120000,
+            });
+            claim = response.data;
+            break;
+          } catch (e) {
+            if (e.response?.data) {
+              claim = e.response.data;
+              break;
+            }
+            if (attempt < 4) {
+              await etc.delay(5000);
+              continue;
+            }
+            logger(`System | ${walletName} | Faucet claim failed: ${chalk.red(e.message)}`);
+            failedClaims++;
+            continue;
+          }
+        }
+        if (claim?.msg === "ok") {
+          logger(`System | ${walletName} | ${etc.timelog()} | Faucet claimed successfully: ${chalk.green("0.2 PHRS")}`);
+          successfulClaims++;
+        } else {
+          logger(`System | ${walletName} | Faucet claim failed: ${chalk.red(claim?.data?.message || "Unknown error")}`);
+          failedClaims++;
+        }
+      } else {
+        const faucetAvailableWib = new Date(faucetStatus.data?.avaliable_timestamp * 1000).toLocaleString("en-US", { timeZone: "Asia/Jakarta" });
+        logger(`System | ${walletName} | Faucet not available. Next available: ${faucetAvailableWib}`);
+        failedClaims++;
+      }
+      logger(`System | --------------------------------------------`);
+    } catch (e) {
+      logger(`System | ${walletName} | ${etc.timelog()} | Error: ${chalk.red(e.message)}`);
+      failedClaims++;
+      logger(`System | --------------------------------------------`);
+    }
+    await etc.delay(3e3);
+  }
+
+  logger(`System | Faucet Claim Summary: Successful: ${chalk.green(successfulClaims)}, Failed: ${chalk.red(failedClaims)}`);
+  logger(`System | --------------------------------------------`);
+
+  // Step 3: Transfer funds to main wallet
+  if (!fs.existsSync("wallet.txt")) {
+    logger(`System | Warning: wallet.txt not found. Skipping transfers.`);
+    return;
+  }
+
+  const destAddress = fs.readFileSync("wallet.txt", "utf8").trim();
+  if (!e.isAddress(destAddress)) {
+    logger(`System | Warning: Invalid wallet address in wallet.txt. Skipping transfers.`);
+    return;
+  }
+
+  let successfulTransfers = 0;
+  let failedTransfers = 0;
+  processedCount = 0;
+
+  logger(`System | Initiating transfers to main wallet: ${chalk.green(maskAddress(destAddress))}`);
+  logger(`System | --------------------------------------------`);
+
+  for (const privateKey of privateKeys) {
+    if (!privateKey) continue;
+    processedCount++;
+    let walletName = `Wallet${processedCount}`;
+    try {
+      const wallet = new e.Wallet(privateKey, provider);
+      const address = wallet.address;
+      logger(`System | ${walletName} | Processing transfer [${processedCount}/${privateKeys.length}]: ${chalk.green(maskAddress(address))}`);
+
+      const balance = await provider.getBalance(address);
+      const balanceEth = e.formatEther(balance);
+      logger(`System | ${walletName} | Balance: ${balanceEth} PHRS`);
+
+      if (parseFloat(balanceEth) <= 0) {
+        logger(`System | ${walletName} | No funds to transfer`);
+        failedTransfers++;
+        logger(`System | --------------------------------------------`);
+        continue;
+      }
+
+      logger(`System | ${walletName} | Initiating transfer`);
+      const gasPrice = await provider.getFeeData();
+      const gasLimit = 21000;
+      const gasCost = gasPrice.gasPrice * BigInt(gasLimit);
+      const amountToSend = balance - gasCost;
+
+      if (amountToSend <= 0) {
+        logger(`System | ${walletName} | Balance too low to cover gas fees`);
+        failedTransfers++;
+        logger(`System | --------------------------------------------`);
+        continue;
+      }
+
+      const tx = await wallet.sendTransaction({
+        to: destAddress,
+        value: amountToSend,
+        gasLimit: gasLimit,
+      });
+      logger(`System | ${walletName} | Transaction sent: ${chalk.green(pharos.explorer.tx(tx.hash))}`);
+      await tx.wait();
+      logger(`System | ${walletName} | ${etc.timelog()} | Transfer Confirmed: ${chalk.green(pharos.explorer.tx(tx.hash))}`);
+      successfulTransfers++;
+      logger(`System | --------------------------------------------`);
+    } catch (e) {
+      logger(`System | ${walletName} | ${etc.timelog()} | Transfer failed: ${chalk.red(e.message)}`);
+      failedTransfers++;
+      logger(`System | --------------------------------------------`);
+    }
+    await etc.delay(3e3);
+  }
+
+  logger(`System | Transfer Summary: Successful: ${chalk.green(successfulTransfers)}, Failed: ${chalk.red(failedTransfers)}`);
+  logger(`System | --------------------------------------------`);
+}
+
+module.exports = {
+  performSwapUSDC,
+  performSwapUSDT,
+  addLpUSDC,
+  addLpUSDT,
+  accountCheckIn,
+  accountLogin,
+  accountCheck,
+  accountClaimFaucet,
+  claimFaucetUSDC,
+  randomTransfer,
+  socialTask,
+  unlimitedFaucet,
+};

@@ -211,58 +211,20 @@ async function main() {
       continue;
     }
 
-    // Handle liquidity addition with multiple attempts
-    if (selected.value === "addLpUSDT" || selected.value === "addLpUSDC") {
-      try {
-        const spinner = createSpinner(`Running ${selected.label}...`);
-        logger(`System | Starting ${selected.label}...`);
-
-        const scriptFunc = service[selected.value];
-        if (scriptFunc) {
-          // Run the function for each wallet and each attempt
-          for (const wallet of global.selectedWallets) {
-            for (let i = 1; i <= global.maxTransaction; i++) {
-              try {
-                logger(`${wallet.name} | Initiating ${selected.label} (${i}/${global.maxTransaction})`);
-                const txHash = await scriptFunc(wallet, logger, i); // Pass wallet and attempt number
-                if (txHash) {
-                  logger(`${wallet.name} | ${new Date().toLocaleTimeString("en-US", { hour12: false })} | ${new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })} | Liquidity Added: https://testnet.pharosscan.xyz/tx/${txHash}`);
-                } else {
-                  logger(`${wallet.name} | Warning: ${selected.label} (${i}/${global.maxTransaction}) skipped due to error`);
-                }
-              } catch (attemptError) {
-                logger(`${wallet.name} | Error in ${selected.label} (${i}/${global.maxTransaction}): ${attemptError.message}`);
-                continue; // Skip to the next attempt
-              }
-              await new Promise((resolve) => setTimeout(resolve, 5000)); // Delay between attempts
-            }
-          }
-          logger(`System | ${selected.label} completed.`);
-        } else {
-          logger(`System | Error: ${selected.label} not implemented.`);
-        }
-        spinner.stop();
-      } catch (e) {
-        logger(`System | Error in ${selected.label}: ${e.message}`);
-        spinner.stop();
+    try {
+      const spinner = createSpinner(`Running ${selected.label}...`);
+      logger(`System | Starting ${selected.label}...`);
+      const scriptFunc = service[selected.value];
+      if (scriptFunc) {
+        await scriptFunc(logger); // Call function with only logger parameter
+        logger(`System | ${selected.label} completed.`);
+      } else {
+        logger(`System | Error: ${selected.label} not implemented.`);
       }
-    } else {
-      // Handle other functions
-      try {
-        const spinner = createSpinner(`Running ${selected.label}...`);
-        logger(`System | Starting ${selected.label}...`);
-        const scriptFunc = service[selected.value];
-        if (scriptFunc) {
-          await scriptFunc(logger);
-          logger(`System | ${selected.label} completed.`);
-        } else {
-          logger(`System | Error: ${selected.label} not implemented.`);
-        }
-        spinner.stop();
-      } catch (e) {
-        logger(`System | Error in ${selected.label}: ${e.message}`);
-        spinner.stop();
-      }
+      spinner.stop();
+    } catch (e) {
+      logger(`System | Error in ${selected.label}: ${chalk.red(e.message)}`);
+      spinner.stop();
     }
 
     await requestInput("Press Enter to continue...");

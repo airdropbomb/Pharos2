@@ -166,7 +166,7 @@ class LiquidityService {
           this.logger.info(`Approving ${amount0} ${token0Name} for ${CONTRACT_ADDRESSES.positionManager}...`, { walletIndex: this.walletIndex });
           const approveTx0 = await token0Contract.approve(
             toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-            amount0Desired, // Approve exact amount
+            amount0Desired,
             { gasLimit: 100000 }
           );
           await approveTx0.wait();
@@ -177,7 +177,7 @@ class LiquidityService {
           this.logger.info(`Approving ${amount1} ${token1Name} for ${CONTRACT_ADDRESSES.positionManager}...`, { walletIndex: this.walletIndex });
           const approveTx1 = await token1Contract.approve(
             toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-            amount1Desired, // Approve exact amount
+            amount1Desired,
             { gasLimit: 100000 }
           );
           await approveTx1.wait();
@@ -208,22 +208,20 @@ class LiquidityService {
           
           tx = await this.positionManager.increaseLiquidity(
             params,
-            { gasLimit: 800000 } // Increased gas limit
+            { gasLimit: 800000 }
           );
-          
           this.logger.info(`Increase liquidity transaction sent: ${tx.hash}`, { walletIndex: this.walletIndex });
         } else {
           // Create new position
           this.logger.info(`Creating new position for ${token0Name}/${token1Name}`, { walletIndex: this.walletIndex });
           
-          // Use narrower ticks for stablecoin pairs
-          const tickLower = -100; // Narrow range for stablecoins
+          const tickLower = -100;
           const tickUpper = 100;
           
           const mintParams = {
             token0,
             token1,
-            fee: FEE_TIERS.LOW, // Verify this (500 = 0.05%)
+            fee: FEE_TIERS.LOW,
             tickLower,
             tickUpper,
             amount0Desired,
@@ -236,21 +234,40 @@ class LiquidityService {
           
           tx = await this.positionManager.mint(
             mintParams,
-            { gasLimit: 1000000 } // Increased gas limit
+            { gasLimit: 1000000 }
           );
-          
           this.logger.info(`Add liquidity transaction sent: ${tx.hash}`, { walletIndex: this.walletIndex });
         }
         
-        // Wait for transaction to be mined
-        const receipt = await tx.wait();
+        // Custom transaction receipt fetching with retry
+        let receipt;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            receipt = await tx.wait();
+            break;
+          } catch (receiptError) {
+            if (receiptError.code === -32008 && attempt < 4) {
+              this.logger.warn(`Failed to get transaction receipt for ${tx.hash}, retrying (${attempt + 1}/5)...`, { walletIndex: this.walletIndex });
+              await sleep(2000);
+              continue;
+            }
+            this.logger.error(`Failed to get transaction receipt for ${tx.hash} after ${attempt + 1} attempts: ${receiptError.message}`, { walletIndex: this.walletIndex });
+            throw receiptError;
+          }
+        }
+        
+        if (!receipt) {
+          throw new Error(`Failed to confirm transaction ${tx.hash} after retries`);
+        }
         
         this.logger.info(`Add liquidity transaction confirmed: ${receipt.transactionHash}`, { walletIndex: this.walletIndex });
-        
         return receipt.transactionHash;
-      }, config.general.retry_attempts, config.general.retry_delay * 5, this.logger, this.walletIndex); // Increased retry delay
+      }, config.general.retry_attempts, config.general.retry_delay * 2, this.logger, this.walletIndex);
     } catch (error) {
-      // Debug revert reason
+      // Log the error but don't crash the process
+      this.logger.error(`Add liquidity failed: ${error.message}`, { walletIndex: this.walletIndex });
+      
+      // Debug revert reason if available
       if (error.code === 'CALL_EXCEPTION' && error.transactionHash) {
         try {
           const provider = this.wallet.provider;
@@ -261,7 +278,8 @@ class LiquidityService {
           this.logger.error(`Failed to fetch revert reason: ${revertError.message}`, { walletIndex: this.walletIndex });
         }
       }
-      this.logger.error(`Add liquidity failed: ${error.message}`, { walletIndex: this.walletIndex });
+      
+      // Return null to skip this attempt and continue
       return null;
     }
   }
@@ -339,18 +357,40 @@ class LiquidityService {
         
         const tx = await this.positionManager.increaseLiquidity(
           params,
-          { gasLimit: 800000 } // Increased gas limit
+          { gasLimit: 800000 }
         );
         
         this.logger.info(`Increase liquidity transaction sent: ${tx.hash}`, { walletIndex: this.walletIndex });
         
-        const receipt = await tx.wait();
+        // Custom transaction receipt fetching with retry
+        let receipt;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            receipt = await tx.wait();
+            break;
+          } catch (receiptError) {
+            if (receiptError.code === -32008 && attempt < 4) {
+              this.logger.warn(`Failed to get transaction receipt for ${tx.hash}, retrying (${attempt + 1}/5)...`, { walletIndex: this.walletIndex });
+              await sleep(2000);
+              continue;
+            }
+            this.logger.error(`Failed to get transaction receipt for ${tx.hash} after ${attempt + 1} attempts: ${receiptError.message}`, { walletIndex: this.walletIndex });
+            throw receiptError;
+          }
+        }
+        
+        if (!receipt) {
+          throw new Error(`Failed to confirm transaction ${tx.hash} after retries`);
+        }
         
         this.logger.info(`Increase liquidity transaction confirmed: ${receipt.transactionHash}`, { walletIndex: this.walletIndex });
-        
         return receipt.transactionHash;
-      }, config.general.retry_attempts, config.general.retry_delay * 5, this.logger, this.walletIndex);
+      }, config.general.retry_attempts, config.general.retry_delay * 2, this.logger, this.walletIndex);
     } catch (error) {
+      // Log the error but don't crash the process
+      this.logger.error(`Increase liquidity failed: ${error.message}`, { walletIndex: this.walletIndex });
+      
+      // Debug revert reason if available
       if (error.code === 'CALL_EXCEPTION' && error.transactionHash) {
         try {
           const provider = this.wallet.provider;
@@ -361,7 +401,8 @@ class LiquidityService {
           this.logger.error(`Failed to fetch revert reason: ${revertError.message}`, { walletIndex: this.walletIndex });
         }
       }
-      this.logger.error(`Increase liquidity failed: ${error.message}`, { walletIndex: this.walletIndex });
+      
+      // Return null to skip this attempt and continue
       return null;
     }
   }

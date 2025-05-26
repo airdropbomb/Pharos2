@@ -1,408 +1,147 @@
 /**
  * src/services/liquidity.js - Add liquidity service
  */
-const { ethers } = require('ethers');
-const { loadConfig } = require('../config');
-const { retry, sleep } = require('../utils/helpers');
-const { TOKEN_ADDRESSES, CONTRACT_ADDRESSES, FEE_TIERS } = require('../utils/constants');
-const { toChecksumAddress } = require('../utils/wallet');
-
-// Load configuration
-const config = loadConfig();
-
-// Position Manager ABI for adding liquidity
-const POSITION_MANAGER_ABI = [
-  'function mint(tuple(address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline)) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)',
-  'function increaseLiquidity(tuple(uint256 tokenId, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, uint256 deadline)) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1)',
-  'function multicall(uint256 deadline, bytes[] calldata data) external payable returns (bytes[] memory)',
-  'function balanceOf(address owner) external view returns (uint256)',
-  'function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)',
-  'function positions(uint256 tokenId) external view returns (uint96 nonce, address operator, address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1)'
-];
-
-// ERC20 ABI for approvals and balance checks
-const ERC20_ABI = [
-  'function approve(address spender, uint256 amount) external returns (bool)',
-  'function allowance(address owner, address spender) external view returns (uint256)',
-  'function balanceOf(address account) external view returns (uint256)',
-  'function decimals() external view returns (uint8)'
-];
+const { ethers } = require("ethers");
+const { contract, abi } = require("../chains").utils;
+const { testnet } = require("../chains");
+const { createLogger } = require("../utils/logger");
 
 class LiquidityService {
-  constructor(wallet, logger, walletIndex) {
+  constructor(wallet, logger, walletName) {
+    this.logger = logger || createLogger("LiquidityService");
     this.wallet = wallet;
-    this.logger = logger;
-    this.walletIndex = walletIndex;
-    
-    // Initialize contracts
-    this.positionManager = new ethers.Contract(
-      toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-      POSITION_MANAGER_ABI,
-      this.wallet
-    );
+    this.walletName = walletName || "Unknown";
+    this.provider = testnet.pharos.provider();
+    this.router = new ethers.Contract(contract.ROUTER, abi.ROUTER, wallet);
   }
-  
-  /**
-   * Find existing position for token pair
-   */
-  async findExistingPosition(token0, token1, fee) {
+
+  // Utility to approve token if needed
+  async approveToken(tokenAddress, spender, amount) {
     try {
-      // Get balance of NFT positions
-      const balance = await this.positionManager.balanceOf(this.wallet.address);
-      
-      if (balance.eq(0)) {
-        return null; // No positions owned
+      const token = new ethers.Contract(tokenAddress, abi.ERC20, this.wallet);
+      const allowance = await token.allowance(this.wallet.address, spender);
+      if (allowance >= amount) {
+        this.logger(`System | ${this.walletName} | Token already approved for ${spender}`);
+        return true;
       }
-      
-      // Normalize addresses for comparison
-      token0 = token0.toLowerCase();
-      token1 = token1.toLowerCase();
-      
-      // Check each position
-      for (let i = 0; i < balance.toNumber(); i++) {
-        try {
-          // Get token ID
-          const tokenId = await this.positionManager.tokenOfOwnerByIndex(this.wallet.address, i);
-          
-          // Get position details
-          const position = await this.positionManager.positions(tokenId);
-          
-          // Check if this position matches our token pair and fee
-          const positionToken0 = position.token0.toLowerCase();
-          const positionToken1 = position.token1.toLowerCase();
-          
-          if (
-            ((positionToken0 === token0 && positionToken1 === token1) || 
-             (positionToken0 === token1 && positionToken1 === token0)) && 
-            position.fee === fee
-          ) {
-            this.logger.info(`Found existing position #${tokenId} for token pair`, { walletIndex: this.walletIndex });
-            return {
-              tokenId,
-              token0: position.token0,
-              token1: position.token1,
-              tickLower: position.tickLower,
-              tickUpper: position.tickUpper
-            };
+
+      this.logger(`System | ${this.walletName} | Approving token ${tokenAddress} for ${spender}`);
+      const tx = await token.approve(spender, ethers.MaxUint256);
+      await this.waitForTransaction(tx.hash, 1);
+      this.logger(`System | ${this.walletName} | Approval successful for ${tokenAddress}`);
+      return true;
+    } catch (error) {
+      this.logger(`System | ${this.walletName} | Approval failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  // Wait for transaction with retry logic
+  async waitForTransaction(txHash, confirmations, retries = 5, delay = 5000) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const receipt = await this.provider.waitForTransaction(txHash, confirmations, 60000);
+        if (receipt && receipt.status === 1) {
+          return receipt;
+        }
+        throw new Error(`Transaction ${txHash} failed or reverted`);
+      } catch (error) {
+        if (error.code === -32008 || error.message.includes("eth_getTransactionReceipt")) {
+          this.logger(`System | ${this.walletName} | Retry ${attempt}/${retries} for tx ${txHash}: ${error.message}`);
+          if (attempt === retries) {
+            this.logger(`System | ${this.walletName} | Max retries reached for tx ${txHash}`);
+            return null;
           }
-        } catch (err) {
-          this.logger.warn(`Error checking position ${i}: ${err.message}`, { walletIndex: this.walletIndex });
-          continue;
-        }
-      }
-      
-      return null; // No matching position found
-    } catch (error) {
-      this.logger.error(`Error finding existing positions: ${error.message}`, { walletIndex: this.walletIndex });
-      return null;
-    }
-  }
-  
-  /**
-   * Get token decimals
-   */
-  async getTokenDecimals(tokenAddress) {
-    try {
-      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, this.wallet);
-      const decimals = await tokenContract.decimals();
-      return decimals;
-    } catch (error) {
-      this.logger.warn(`Failed to fetch decimals for ${tokenAddress}, assuming 6: ${error.message}`, { walletIndex: this.walletIndex });
-      return 6; // Default to 6 for USDC/USDT
-    }
-  }
-  
-  /**
-   * Add liquidity to a pool
-   */
-  async addLiquidity(token0Name, token1Name, amount0, amount1) {
-    this.logger.info(`Adding liquidity: ${amount0} ${token0Name} and ${amount1} ${token1Name}...`, { walletIndex: this.walletIndex });
-    
-    try {
-      return await retry(async () => {
-        // Get token addresses and ensure correct order
-        let token0 = toChecksumAddress(TOKEN_ADDRESSES[token0Name]);
-        let token1 = toChecksumAddress(TOKEN_ADDRESSES[token1Name]);
-        
-        if (!token0 || !token1) {
-          throw new Error(`Invalid token pair: ${token0Name}/${token1Name}`);
-        }
-        
-        // Ensure token0 < token1 (required by Uniswap)
-        let swapped = false;
-        if (token0.toLowerCase() > token1.toLowerCase()) {
-          [token0, token1] = [token1, token0];
-          [amount0, amount1] = [amount1, amount0];
-          [token0Name, token1Name] = [token1Name, token0Name];
-          swapped = true;
-        }
-        
-        // Get token decimals
-        const decimals0 = await this.getTokenDecimals(token0);
-        const decimals1 = await this.getTokenDecimals(token1);
-        
-        // Calculate amounts
-        const amount0Desired = ethers.utils.parseUnits(amount0.toString(), decimals0);
-        const amount1Desired = ethers.utils.parseUnits(amount1.toString(), decimals1);
-        
-        // Initialize token contracts
-        const token0Contract = new ethers.Contract(token0, ERC20_ABI, this.wallet);
-        const token1Contract = new ethers.Contract(token1, ERC20_ABI, this.wallet);
-        
-        // Check balances
-        const balance0 = await token0Contract.balanceOf(this.wallet.address);
-        const balance1 = await token1Contract.balanceOf(this.wallet.address);
-        this.logger.info(`Balances: ${ethers.utils.formatUnits(balance0, decimals0)} ${token0Name}, ${ethers.utils.formatUnits(balance1, decimals1)} ${token1Name}`, { walletIndex: this.walletIndex });
-        
-        if (balance0.lt(amount0Desired) || balance1.lt(amount1Desired)) {
-          throw new Error(`Insufficient balance: Need ${amount0} ${token0Name} and ${amount1} ${token1Name}`);
-        }
-        
-        // Approve position manager to spend tokens
-        const allowance0 = await token0Contract.allowance(this.wallet.address, toChecksumAddress(CONTRACT_ADDRESSES.positionManager));
-        const allowance1 = await token1Contract.allowance(this.wallet.address, toChecksumAddress(CONTRACT_ADDRESSES.positionManager));
-        
-        if (allowance0.lt(amount0Desired)) {
-          this.logger.info(`Approving ${amount0} ${token0Name} for ${CONTRACT_ADDRESSES.positionManager}...`, { walletIndex: this.walletIndex });
-          const approveTx0 = await token0Contract.approve(
-            toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-            amount0Desired,
-            { gasLimit: 100000 }
-          );
-          await approveTx0.wait();
-          this.logger.info(`Approved ${token0Name}`, { walletIndex: this.walletIndex });
-        }
-        
-        if (allowance1.lt(amount1Desired)) {
-          this.logger.info(`Approving ${amount1} ${token1Name} for ${CONTRACT_ADDRESSES.positionManager}...`, { walletIndex: this.walletIndex });
-          const approveTx1 = await token1Contract.approve(
-            toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-            amount1Desired,
-            { gasLimit: 100000 }
-          );
-          await approveTx1.wait();
-          this.logger.info(`Approved ${token1Name}`, { walletIndex: this.walletIndex });
-        }
-        
-        // Check for existing position
-        const existingPosition = await this.findExistingPosition(
-          token0, 
-          token1, 
-          FEE_TIERS.LOW
-        );
-        
-        let tx;
-        
-        if (existingPosition) {
-          // Use existing position
-          this.logger.info(`Using existing position #${existingPosition.tokenId}`, { walletIndex: this.walletIndex });
-          
-          const params = {
-            tokenId: existingPosition.tokenId,
-            amount0Desired,
-            amount1Desired,
-            amount0Min: 0,
-            amount1Min: 0,
-            deadline: Math.floor(Date.now() / 1000) + 60 * 20
-          };
-          
-          tx = await this.positionManager.increaseLiquidity(
-            params,
-            { gasLimit: 800000 }
-          );
-          this.logger.info(`Increase liquidity transaction sent: ${tx.hash}`, { walletIndex: this.walletIndex });
+          await new Promise((resolve) => setTimeout(resolve, delay));
         } else {
-          // Create new position
-          this.logger.info(`Creating new position for ${token0Name}/${token1Name}`, { walletIndex: this.walletIndex });
-          
-          const tickLower = -100;
-          const tickUpper = 100;
-          
-          const mintParams = {
-            token0,
-            token1,
-            fee: FEE_TIERS.LOW,
-            tickLower,
-            tickUpper,
-            amount0Desired,
-            amount1Desired,
-            amount0Min: 0,
-            amount1Min: 0,
-            recipient: this.wallet.address,
-            deadline: Math.floor(Date.now() / 1000) + 60 * 20
-          };
-          
-          tx = await this.positionManager.mint(
-            mintParams,
-            { gasLimit: 1000000 }
-          );
-          this.logger.info(`Add liquidity transaction sent: ${tx.hash}`, { walletIndex: this.walletIndex });
-        }
-        
-        // Custom transaction receipt fetching with retry
-        let receipt;
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try {
-            receipt = await tx.wait();
-            break;
-          } catch (receiptError) {
-            if (receiptError.code === -32008 && attempt < 4) {
-              this.logger.warn(`Failed to get transaction receipt for ${tx.hash}, retrying (${attempt + 1}/5)...`, { walletIndex: this.walletIndex });
-              await sleep(2000);
-              continue;
-            }
-            this.logger.error(`Failed to get transaction receipt for ${tx.hash} after ${attempt + 1} attempts: ${receiptError.message}`, { walletIndex: this.walletIndex });
-            throw receiptError;
-          }
-        }
-        
-        if (!receipt) {
-          throw new Error(`Failed to confirm transaction ${tx.hash} after retries`);
-        }
-        
-        this.logger.info(`Add liquidity transaction confirmed: ${receipt.transactionHash}`, { walletIndex: this.walletIndex });
-        return receipt.transactionHash;
-      }, config.general.retry_attempts, config.general.retry_delay * 2, this.logger, this.walletIndex);
-    } catch (error) {
-      // Log the error but don't crash the process
-      this.logger.error(`Add liquidity failed: ${error.message}`, { walletIndex: this.walletIndex });
-      
-      // Debug revert reason if available
-      if (error.code === 'CALL_EXCEPTION' && error.transactionHash) {
-        try {
-          const provider = this.wallet.provider;
-          const txResponse = await provider.getTransaction(error.transactionHash);
-          const code = await provider.call(txResponse, txResponse.blockNumber);
-          this.logger.error(`Revert reason: ${code}`, { walletIndex: this.walletIndex });
-        } catch (revertError) {
-          this.logger.error(`Failed to fetch revert reason: ${revertError.message}`, { walletIndex: this.walletIndex });
+          this.logger(`System | ${this.walletName} | Transaction error: ${error.message}`);
+          return null;
         }
       }
-      
-      // Return null to skip this attempt and continue
-      return null;
     }
+    return null;
   }
-  
-  /**
-   * Increase liquidity in an existing position
-   */
-  async increaseLiquidity(tokenId, amount0, amount1, token0Name, token1Name) {
-    this.logger.info(`Increasing liquidity for position #${tokenId}: ${amount0} ${token0Name} and ${amount1} ${token1Name}...`, { walletIndex: this.walletIndex });
-    
+
+  // Add liquidity for a token pair
+  async addLiquidity(tokenA, tokenB, amountA, amountB) {
     try {
-      return await retry(async () => {
-        // Get token addresses
-        const token0 = toChecksumAddress(TOKEN_ADDRESSES[token0Name]);
-        const token1 = toChecksumAddress(TOKEN_ADDRESSES[token1Name]);
-        
-        if (!token0 || !token1) {
-          throw new Error(`Invalid token pair: ${token0Name}/${token1Name}`);
-        }
-        
-        // Get token decimals
-        const decimals0 = await this.getTokenDecimals(token0);
-        const decimals1 = await this.getTokenDecimals(token1);
-        
-        // Calculate amounts
-        const amount0Desired = ethers.utils.parseUnits(amount0.toString(), decimals0);
-        const amount1Desired = ethers.utils.parseUnits(amount1.toString(), decimals1);
-        
-        // Initialize token contracts
-        const token0Contract = new ethers.Contract(token0, ERC20_ABI, this.wallet);
-        const token1Contract = new ethers.Contract(token1, ERC20_ABI, this.wallet);
-        
-        // Check balances
-        const balance0 = await token0Contract.balanceOf(this.wallet.address);
-        const balance1 = await token1Contract.balanceOf(this.wallet.address);
-        if (balance0.lt(amount0Desired) || balance1.lt(amount1Desired)) {
-          throw new Error(`Insufficient balance: Need ${amount0} ${token0Name} and ${amount1} ${token1Name}`);
-        }
-        
-        // Approve position manager to spend tokens
-        const allowance0 = await token0Contract.allowance(this.wallet.address, toChecksumAddress(CONTRACT_ADDRESSES.positionManager));
-        const allowance1 = await token1Contract.allowance(this.wallet.address, toChecksumAddress(CONTRACT_ADDRESSES.positionManager));
-        
-        if (allowance0.lt(amount0Desired)) {
-          this.logger.info(`Approving ${amount0} ${token0Name} for ${CONTRACT_ADDRESSES.positionManager}...`, { walletIndex: this.walletIndex });
-          const approveTx0 = await token0Contract.approve(
-            toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-            amount0Desired,
-            { gasLimit: 100000 }
-          );
-          await approveTx0.wait();
-          this.logger.info(`Approved ${token0Name}`, { walletIndex: this.walletIndex });
-        }
-        
-        if (allowance1.lt(amount1Desired)) {
-          this.logger.info(`Approving ${amount1} ${token1Name} for ${CONTRACT_ADDRESSES.positionManager}...`, { walletIndex: this.walletIndex });
-          const approveTx1 = await token1Contract.approve(
-            toChecksumAddress(CONTRACT_ADDRESSES.positionManager),
-            amount1Desired,
-            { gasLimit: 100000 }
-          );
-          await approveTx1.wait();
-          this.logger.info(`Approved ${token1Name}`, { walletIndex: this.walletIndex });
-        }
-        
-        // Create increase liquidity parameters
-        const params = {
-          tokenId,
-          amount0Desired,
-          amount1Desired,
-          amount0Min: 0,
-          amount1Min: 0,
-          deadline: Math.floor(Date.now() / 1000) + 60 * 20
-        };
-        
-        const tx = await this.positionManager.increaseLiquidity(
-          params,
-          { gasLimit: 800000 }
-        );
-        
-        this.logger.info(`Increase liquidity transaction sent: ${tx.hash}`, { walletIndex: this.walletIndex });
-        
-        // Custom transaction receipt fetching with retry
-        let receipt;
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try {
-            receipt = await tx.wait();
-            break;
-          } catch (receiptError) {
-            if (receiptError.code === -32008 && attempt < 4) {
-              this.logger.warn(`Failed to get transaction receipt for ${tx.hash}, retrying (${attempt + 1}/5)...`, { walletIndex: this.walletIndex });
-              await sleep(2000);
-              continue;
-            }
-            this.logger.error(`Failed to get transaction receipt for ${tx.hash} after ${attempt + 1} attempts: ${receiptError.message}`, { walletIndex: this.walletIndex });
-            throw receiptError;
-          }
-        }
-        
-        if (!receipt) {
-          throw new Error(`Failed to confirm transaction ${tx.hash} after retries`);
-        }
-        
-        this.logger.info(`Increase liquidity transaction confirmed: ${receipt.transactionHash}`, { walletIndex: this.walletIndex });
-        return receipt.transactionHash;
-      }, config.general.retry_attempts, config.general.retry_delay * 2, this.logger, this.walletIndex);
-    } catch (error) {
-      // Log the error but don't crash the process
-      this.logger.error(`Increase liquidity failed: ${error.message}`, { walletIndex: this.walletIndex });
-      
-      // Debug revert reason if available
-      if (error.code === 'CALL_EXCEPTION' && error.transactionHash) {
-        try {
-          const provider = this.wallet.provider;
-          const txResponse = await provider.getTransaction(error.transactionHash);
-          const code = await provider.call(txResponse, txResponse.blockNumber);
-          this.logger.error(`Revert reason: ${code}`, { walletIndex: this.walletIndex });
-        } catch (revertError) {
-          this.logger.error(`Failed to fetch revert reason: ${revertError.message}`, { walletIndex: this.walletIndex });
-        }
+      // Map token symbols to addresses
+      const tokenMap = {
+        PHRS: contract.WPHRS,
+        USDT: contract.USDT,
+        USDC: contract.USDC,
+      };
+
+      const tokenAAddress = tokenMap[tokenA.toUpperCase()];
+      const tokenBAddress = tokenMap[tokenB.toUpperCase()];
+      if (!tokenAAddress || !tokenBAddress) {
+        this.logger(`System | ${this.walletName} | Invalid token pair: ${tokenA}-${tokenB}`);
+        return null;
       }
-      
-      // Return null to skip this attempt and continue
+
+      // Determine token order (token0 should be the lower address)
+      const token0 = tokenAAddress < tokenBAddress ? tokenAAddress : tokenBAddress;
+      const token1 = tokenAAddress < tokenBAddress ? tokenBAddress : tokenAAddress;
+      const amount0Desired = tokenAAddress === token0 ? ethers.parseEther(amountA.toString()) : ethers.parseEther(amountB.toString());
+      const amount1Desired = tokenAAddress === token0 ? ethers.parseEther(amountB.toString()) : ethers.parseEther(amountA.toString());
+
+      // Approve tokens
+      const approvedA = await this.approveToken(tokenAAddress, contract.ROUTER, amount0Desired);
+      const approvedB = await this.approveToken(tokenBAddress, contract.ROUTER, amount1Desired);
+      if (!approvedA || !approvedB) {
+        this.logger(`System | ${this.walletName} | Token approval failed for ${tokenA}-${tokenB}`);
+        return null;
+      }
+
+      // Prepare mint parameters
+      const params = {
+        token0,
+        token1,
+        fee: 500, // 0.05% fee tier
+        tickLower: -887220, // Full range
+        tickUpper: 887220, // Full range
+        amount0Desired: amount0Desired.toString(),
+        amount1Desired: amount1Desired.toString(),
+        amount0Min: "0",
+        amount1Min: "0",
+        recipient: this.wallet.address,
+        deadline: Math.floor(Date.now() / 1000) + 1800, // 30 minutes
+      };
+
+      // Encode mint and refundETH calls
+      const mintData = this.router.interface.encodeFunctionData("mint", [params]);
+      const refundData = this.router.interface.encodeFunctionData("refundETH", []);
+      const multicallData = [mintData, refundData];
+
+      // Estimate gas and send transaction
+      const txParams = {
+        to: contract.ROUTER,
+        data: this.router.interface.encodeFunctionData("multicall", [multicallData]),
+        value: token0 === contract.WPHRS ? amount0Desired : token1 === contract.WPHRS ? amount1Desired : 0,
+        gasLimit: 500000, // Fixed gas limit
+      };
+
+      const estimatedGas = await this.provider.estimateGas(txParams).catch((e) => {
+        this.logger(`System | ${this.walletName} | Gas estimation failed: ${e.message}`);
+        return ethers.toBigInt(500000);
+      });
+      txParams.gasLimit = estimatedGas * 12n / 10n; // Add 20% buffer
+
+      this.logger(`System | ${this.walletName} | Sending liquidity transaction for ${amountA} ${tokenA} + ${amountB} ${tokenB}`);
+      const tx = await this.wallet.sendTransaction(txParams);
+      this.logger(`System | ${this.walletName} | Transaction sent: ${tx.hash}`);
+
+      // Wait for transaction
+      const receipt = await this.waitForTransaction(tx.hash, 1);
+      if (receipt) {
+        this.logger(`System | ${this.walletName} | Liquidity added successfully: ${tx.hash}`);
+        return tx.hash;
+      } else {
+        this.logger(`System | ${this.walletName} | Failed to confirm liquidity transaction: ${tx.hash}`);
+        return null;
+      }
+    } catch (error) {
+      this.logger(`System | ${this.walletName} | Error adding liquidity: ${error.message}`);
       return null;
     }
   }

@@ -248,7 +248,7 @@ class LiquidityService {
         this.logger.info(`Add liquidity transaction confirmed: ${receipt.transactionHash}`, { walletIndex: this.walletIndex });
         
         return receipt.transactionHash;
-      }, config.general.retry_attempts, config.general.retry_delay * 2, this.logger, this.walletIndex); // Increased retry delay
+      }, config.general.retry_attempts, config.general.retry_delay * 5, this.logger, this.walletIndex); // Increased retry delay
     } catch (error) {
       // Debug revert reason
       if (error.code === 'CALL_EXCEPTION' && error.transactionHash) {
@@ -349,7 +349,7 @@ class LiquidityService {
         this.logger.info(`Increase liquidity transaction confirmed: ${receipt.transactionHash}`, { walletIndex: this.walletIndex });
         
         return receipt.transactionHash;
-      }, config.general.retry_attempts, config.general.retry_delay * 2, this.logger, this.walletIndex);
+      }, config.general.retry_attempts, config.general.retry_delay * 5, this.logger, this.walletIndex);
     } catch (error) {
       if (error.code === 'CALL_EXCEPTION' && error.transactionHash) {
         try {

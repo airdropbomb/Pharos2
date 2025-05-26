@@ -299,7 +299,7 @@ async function addLpUSDC(logger) {
       if (!l) {
         continue;
       }
-      let amount = getRandomAmount(0.2, 0.5); // Random amount between 0.2 and 0.5
+      let amount = getRandomAmount(0.02, 0.05); // Random amount between 0.02 and 0.05
       let amountStr = e.formatEther(amount);
       let c = {
         token0: contract.WPHRS,
@@ -350,7 +350,7 @@ async function addLpUSDT(logger) {
       if (!l) {
         continue;
       }
-      let amount = getRandomAmount(0.2, 0.5); // Random amount between 0.2 and 0.5
+      let amount = getRandomAmount(0.02, 0.05); // Random amount between 0.02 and 0.05
       let amountStr = e.formatEther(amount);
       let c = {
         token0: contract.WPHRS,
